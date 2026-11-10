@@ -123,11 +123,17 @@
     campo.value = '';
     if (!texto) return;
 
-    // Si todavía no hay PIN, lo que escribiste es el PIN
+    // Si todavía no hay PIN, lo que escribiste es el PIN.
+    // Le quitamos puntos, comas y espacios que a veces mete el dictado
     if (!pin) {
-      pin = texto;
+      pin = texto.replace(/[^a-z0-9]/gi, '').toLowerCase();
+      if (!pin) {
+        estado.textContent = 'Ese PIN quedó vacío, intenta otra vez';
+        return;
+      }
       guardar('pin', pin);
       revisarPin();
+      respuesta.textContent = 'PIN guardado: ' + pin + ' ✅ Ya pregúntame algo.';
       return;
     }
 
