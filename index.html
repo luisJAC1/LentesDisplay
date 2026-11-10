@@ -22,17 +22,17 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
-    padding: 24px;
+    gap: 12px;
+    padding: 20px;
     box-sizing: border-box;
     text-align: center;
   }
-  h1 { margin: 0; font-size: 44px; color: #5ff; }
-  #reloj { font-size: 56px; font-weight: 700; }
-  #info { font-size: 22px; color: #aaa; }
+  h1 { margin: 0; font-size: 36px; color: #5ff; }
+  #reloj { font-size: 44px; font-weight: 700; }
+  #info { font-size: 20px; color: #aaa; }
   button, input {
-    font-size: 26px;
-    padding: 12px 20px;
+    font-size: 24px;
+    padding: 10px 18px;
     border-radius: 16px;
     border: 2px solid #555;
     background: #111;
@@ -41,8 +41,9 @@
   }
   /* Marco cyan en lo que tienes seleccionado con el Neural Band */
   button:focus, input:focus { outline: 4px solid #5ff; border-color: #5ff; }
-  #respuesta { font-size: 24px; color: #ff5; min-height: 30px; }
-  #tecla { font-size: 18px; color: #777; }
+  #respuesta { font-size: 22px; color: #ff5; min-height: 28px; }
+  #estadoVoz { font-size: 16px; color: #f9a; }
+  #tecla { font-size: 16px; color: #777; }
 </style>
 </head>
 <body>
@@ -52,11 +53,15 @@
   <div id="info">Batería: ...</div>
   <button id="boton">Toca aquí: 0</button>
   <input id="campo" type="text" placeholder="Dime algo (dicta aquí)">
+  <button id="probarVoz">🔊 Probar voz</button>
   <div id="respuesta"></div>
+  <div id="estadoVoz">Voz: revisando...</div>
   <div id="tecla">Gesto: ninguno</div>
 </main>
 
 <script>
+  const estadoVoz = document.getElementById('estadoVoz');
+
   // 1. RELOJ que se actualiza cada segundo
   function actualizarReloj() {
     const ahora = new Date();
@@ -92,24 +97,59 @@
     try { localStorage.setItem('cuenta', cuenta); } catch (e) {}
   });
 
-  // 4. DICTADO + VOZ: lo que dictes se muestra y los lentes te lo dicen
+  // 4. VOZ con diagnóstico
+  // Busca qué voces trae el navegador de los lentes y si hay alguna en español
+  let vozEspanol = null;
+  function revisarVoces() {
+    if (!('speechSynthesis' in window)) {
+      estadoVoz.textContent = 'Voz: este navegador no tiene speechSynthesis';
+      return;
+    }
+    const voces = speechSynthesis.getVoices();
+    vozEspanol = voces.find(function (v) { return v.lang && v.lang.toLowerCase().startsWith('es'); }) || null;
+    const idiomas = voces.map(function (v) { return v.lang; }).slice(0, 6).join(', ');
+    estadoVoz.textContent = 'Voces: ' + voces.length +
+      (idiomas ? ' (' + idiomas + ')' : '') +
+      (vozEspanol ? ' ✅ español' : ' ❌ sin español');
+  }
+  revisarVoces();
+  if ('speechSynthesis' in window) {
+    speechSynthesis.addEventListener('voiceschanged', revisarVoces);
+  }
+
+  // Función para hablar. Si hay voz en español la usa, si no usa la que traiga por default
+  function hablar(texto) {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel(); // por si se quedó algo trabado
+    const voz = new SpeechSynthesisUtterance(texto);
+    if (vozEspanol) {
+      voz.voice = vozEspanol;
+      voz.lang = vozEspanol.lang;
+    }
+    voz.onstart = function () { estadoVoz.textContent = 'Voz: hablando... 🔊'; };
+    voz.onend = function () { estadoVoz.textContent = 'Voz: terminó ✅'; };
+    voz.onerror = function (e) { estadoVoz.textContent = 'Voz: error ' + e.error; };
+    speechSynthesis.speak(voz);
+  }
+
+  // Botón de prueba. Se activa con tu toque, que a veces es necesario para que suene
+  document.getElementById('probarVoz').addEventListener('click', function () {
+    hablar('Hola Alfaro, ya puedo hablar');
+  });
+
+  // 5. DICTADO: lo que dictes se muestra y los lentes te lo dicen
   document.getElementById('campo').addEventListener('change', function (e) {
     const texto = e.target.value.trim();
     if (!texto) return;
     document.getElementById('respuesta').textContent = 'Dijiste: ' + texto;
-    if ('speechSynthesis' in window) {
-      const voz = new SpeechSynthesisUtterance('Dijiste ' + texto);
-      voz.lang = 'es-MX';
-      speechSynthesis.speak(voz);
-    }
+    hablar('Dijiste ' + texto);
     e.target.value = '';
   });
 
-  // 5. NAVEGACIÓN con el Neural Band
+  // 6. NAVEGACIÓN con el Neural Band
   // Los gestos llegan como flechas del teclado. Aquí decidimos a dónde brincar.
-  const controles = [boton, document.getElementById('campo')];
+  const controles = [boton, document.getElementById('campo'), document.getElementById('probarVoz')];
   document.addEventListener('keydown', function (e) {
-    // Debug: muestra qué tecla mandó tu gesto
     document.getElementById('tecla').textContent = 'Gesto: ' + e.key;
 
     const adelante = e.key === 'ArrowDown' || e.key === 'ArrowRight';
