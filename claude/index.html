@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=2,shrink-to-fit=no">
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="description" content="Claude en los lentes de Alfaro">
+<title>Claude</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    overflow: hidden;
+  }
+  main {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  h1 { margin: 0; font-size: 28px; color: #f96; text-align: center; }
+  /* Caja donde sale la respuesta de Claude */
+  #respuesta {
+    flex: 1;
+    overflow: hidden;
+    font-size: 24px;
+    line-height: 1.3;
+    color: #fff;
+    border: 2px solid #333;
+    border-radius: 16px;
+    padding: 14px;
+  }
+  #pregunta { font-size: 18px; color: #aaa; min-height: 22px; }
+  #estado { font-size: 16px; color: #f9a; text-align: center; }
+  .fila { display: flex; gap: 10px; }
+  input, button {
+    font-size: 22px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    border: 2px solid #555;
+    background: #111;
+    color: #fff;
+  }
+  input { width: 100%; box-sizing: border-box; }
+  button { flex: 1; }
+  input:focus, button:focus { outline: 4px solid #f96; border-color: #f96; }
+</style>
+</head>
+<body>
+<main>
+  <h1>✳️ Claude</h1>
+  <div id="pregunta"></div>
+  <div id="respuesta">Toca el campo de abajo y pregúntame algo.</div>
+  <input id="campo" type="text" placeholder="Pregúntale a Claude">
+  <div class="fila">
+    <button id="nueva">🧹 Nueva</button>
+    <button id="voz">🔇 Voz</button>
+  </div>
+  <div id="estado"></div>
+</main>
+
+<script>
+  // ⚠️ CAMBIA ESTO por la URL de tu Worker de Cloudflare
+  const WORKER_URL = 'https://claude-lentes.TU-SUBDOMINIO.workers.dev';
+
+  const campo = document.getElementById('campo');
+  const respuesta = document.getElementById('respuesta');
+  const pregunta = document.getElementById('pregunta');
+  const estado = document.getElementById('estado');
+  const btnNueva = document.getElementById('nueva');
+  const btnVoz = document.getElementById('voz');
+
+  // Pequeña ayuda para leer y guardar en la "libretita" del navegador sin que truene
+  function leer(clave) { try { return localStorage.getItem(clave); } catch (e) { return null; } }
+  function guardar(clave, valor) { try { localStorage.setItem(clave, valor); } catch (e) {} }
+
+  // 1. PIN. La primera vez te lo pide y lo guarda en los lentes (nunca en GitHub)
+  let pin = leer('pin');
+  function revisarPin() {
+    if (!pin) {
+      campo.placeholder = 'Escribe tu PIN (solo la primera vez)';
+      estado.textContent = 'Falta tu PIN 🔒';
+    } else {
+      campo.placeholder = 'Pregúntale a Claude';
+      estado.textContent = 'Listo ✅';
+    }
+  }
+  revisarPin();
+
+  // 2. VOZ. Apagada por default porque tus lentes leen con acento gringo 😂
+  let vozOn = leer('vozOn') === '1';
+  function pintarVoz() { btnVoz.textContent = vozOn ? '🔊 Voz' : '🔇 Voz'; }
+  pintarVoz();
+  btnVoz.addEventListener('click', function () {
+    vozOn = !vozOn;
+    guardar('vozOn', vozOn ? '1' : '0');
+    pintarVoz();
+    if (!vozOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+  });
+  function hablar(texto) {
+    if (!vozOn || !('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    speechSynthesis.speak(new SpeechSynthesisUtterance(texto));
+  }
+
+  // 3. MEMORIA DE LA PLÁTICA. Claude recuerda lo último que hablaron mientras la app está abierta
+  let historial = [];
+  btnNueva.addEventListener('click', function () {
+    historial = [];
+    pregunta.textContent = '';
+    respuesta.textContent = 'Plática nueva. Pregúntame algo.';
+    estado.textContent = 'Borrón y cuenta nueva 🧹';
+  });
+
+  // 4. PREGUNTAR. Cuando terminas de dictar, se manda al Worker y el Worker a Claude
+  campo.addEventListener('change', async function () {
+    const texto = campo.value.trim();
+    campo.value = '';
+    if (!texto) return;
+
+    // Si todavía no hay PIN, lo que escribiste es el PIN
+    if (!pin) {
+      pin = texto;
+      guardar('pin', pin);
+      revisarPin();
+      return;
+    }
+
+    pregunta.textContent = '🗣️ ' + texto;
+    respuesta.textContent = 'Pensando... 🤔';
+    estado.textContent = '';
+    historial.push({ role: 'user', content: texto });
+
+    try {
+      const res = await fetch(WORKER_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Pin': pin },
+        body: JSON.stringify({ messages: historial.slice(-10) }),
+      });
+      const data = await res.json();
+
+      if (res.status === 401) {
+        // PIN mal escrito. Lo borramos para que lo vuelvas a poner
+        pin = null;
+        guardar('pin', '');
+        historial.pop();
+        respuesta.textContent = 'PIN incorrecto. Vuelve a escribirlo abajo.';
+        revisarPin();
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || 'Algo falló');
+
+      historial.push({ role: 'assistant', content: data.text });
+      respuesta.textContent = data.text;
+      hablar(data.text);
+    } catch (err) {
+      historial.pop();
+      respuesta.textContent = 'No pude hablar con Claude 😵';
+      estado.textContent = 'Error: ' + err.message;
+    }
+  });
+
+  // 5. NAVEGACIÓN con el Neural Band (igual que en tu app de prueba)
+  const controles = [campo, btnNueva, btnVoz];
+  document.addEventListener('keydown', function (e) {
+    const adelante = e.key === 'ArrowDown' || e.key === 'ArrowRight';
+    const atras = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+    if (!adelante && !atras) return;
+    e.preventDefault();
+    let i = controles.indexOf(document.activeElement);
+    i = i === -1 ? 0 : (i + (adelante ? 1 : -1) + controles.length) % controles.length;
+    controles[i].focus();
+  });
+
+  campo.focus();
+</script>
+</body>
+</html>
