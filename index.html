@@ -42,6 +42,7 @@
   /* Marco cyan en lo que tienes seleccionado con el Neural Band */
   button:focus, input:focus { outline: 4px solid #5ff; border-color: #5ff; }
   #respuesta { font-size: 24px; color: #ff5; min-height: 30px; }
+  #tecla { font-size: 18px; color: #777; }
 </style>
 </head>
 <body>
@@ -52,6 +53,7 @@
   <button id="boton">Toca aquí: 0</button>
   <input id="campo" type="text" placeholder="Dime algo (dicta aquí)">
   <div id="respuesta"></div>
+  <div id="tecla">Gesto: ninguno</div>
 </main>
 
 <script>
@@ -101,6 +103,27 @@
       speechSynthesis.speak(voz);
     }
     e.target.value = '';
+  });
+
+  // 5. NAVEGACIÓN con el Neural Band
+  // Los gestos llegan como flechas del teclado. Aquí decidimos a dónde brincar.
+  const controles = [boton, document.getElementById('campo')];
+  document.addEventListener('keydown', function (e) {
+    // Debug: muestra qué tecla mandó tu gesto
+    document.getElementById('tecla').textContent = 'Gesto: ' + e.key;
+
+    const adelante = e.key === 'ArrowDown' || e.key === 'ArrowRight';
+    const atras = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+    if (!adelante && !atras) return;
+
+    e.preventDefault();
+    let i = controles.indexOf(document.activeElement);
+    if (i === -1) {
+      i = 0;
+    } else {
+      i = (i + (adelante ? 1 : -1) + controles.length) % controles.length;
+    }
+    controles[i].focus();
   });
 
   // Al abrir, el botón ya queda seleccionado
