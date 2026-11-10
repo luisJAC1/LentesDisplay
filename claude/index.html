@@ -60,6 +60,7 @@
   <div class="fila">
     <button id="nueva">🧹 Nueva</button>
     <button id="voz">🔇 Voz</button>
+    <button id="oir">▶️ Oír</button>
   </div>
   <div id="estado"></div>
 </main>
@@ -92,21 +93,76 @@
   }
   revisarPin();
 
-  // 2. VOZ. Apagada por default porque tus lentes leen con acento gringo 😂
+  // 2. VOZ EN ESPAÑOL. El Worker convierte la respuesta en audio con una voz en español
+  //    y aquí lo reproducimos. Ya no usamos la voz gringa de los lentes.
+  const btnOir = document.getElementById('oir');
   let vozOn = leer('vozOn') === '1';
+  let ultimoAudio = null;   // el audio de la última respuesta, para repetirlo
+  let ultimoTexto = '';     // el texto de la última respuesta
+
   function pintarVoz() { btnVoz.textContent = vozOn ? '🔊 Voz' : '🔇 Voz'; }
   pintarVoz();
   btnVoz.addEventListener('click', function () {
     vozOn = !vozOn;
     guardar('vozOn', vozOn ? '1' : '0');
     pintarVoz();
-    if (!vozOn && 'speechSynthesis' in window) speechSynthesis.cancel();
+    if (!vozOn && ultimoAudio) ultimoAudio.pause();
   });
-  function hablar(texto) {
-    if (!vozOn || !('speechSynthesis' in window)) return;
-    speechSynthesis.cancel();
-    speechSynthesis.speak(new SpeechSynthesisUtterance(texto));
+
+  // Le pide al Worker el audio de un texto
+  async function pedirAudio(texto) {
+    const res = await fetch(WORKER_URL + '/voz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Pin': pin },
+      body: JSON.stringify({ text: texto }),
+    });
+    if (!res.ok) {
+      let msg = 'Error de voz';
+      try { msg = (await res.json()).error || msg; } catch (e) {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    return new Audio(URL.createObjectURL(blob));
   }
+
+  // Reproduce el audio. Si el navegador lo bloquea, te pide que toques ▶️ Oír
+  async function reproducir() {
+    if (!ultimoAudio) return;
+    try {
+      ultimoAudio.currentTime = 0;
+      await ultimoAudio.play();
+      estado.textContent = 'Hablando... 🔊';
+      ultimoAudio.onended = function () { estado.textContent = 'Listo ✅'; };
+    } catch (e) {
+      estado.textContent = 'Toca ▶️ Oír para escucharlo';
+    }
+  }
+
+  async function hablar(texto) {
+    ultimoTexto = texto;
+    ultimoAudio = null;
+    if (!vozOn) return;
+    try {
+      estado.textContent = 'Preparando voz... 🎙️';
+      ultimoAudio = await pedirAudio(texto);
+      await reproducir();
+    } catch (e) {
+      estado.textContent = 'Voz: ' + e.message;
+    }
+  }
+
+  // Botón Oír. Repite la última respuesta (o la pide si no la tenía)
+  btnOir.addEventListener('click', async function () {
+    if (ultimoAudio) return reproducir();
+    if (!ultimoTexto) { estado.textContent = 'Todavía no hay nada que oír'; return; }
+    try {
+      estado.textContent = 'Preparando voz... 🎙️';
+      ultimoAudio = await pedirAudio(ultimoTexto);
+      await reproducir();
+    } catch (e) {
+      estado.textContent = 'Voz: ' + e.message;
+    }
+  });
 
   // 3. MEMORIA DE LA PLÁTICA. Claude recuerda lo último que hablaron mientras la app está abierta
   let historial = [];
@@ -172,7 +228,7 @@
   });
 
   // 5. NAVEGACIÓN con el Neural Band (igual que en tu app de prueba)
-  const controles = [campo, btnNueva, btnVoz];
+  const controles = [campo, btnNueva, btnVoz, btnOir];
   document.addEventListener('keydown', function (e) {
     const adelante = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     const atras = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
