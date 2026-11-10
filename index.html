@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=2,shrink-to-fit=no">
+<meta name="mrbd-web-app-capable" content="yes">
+<meta name="description" content="Hola mundo de Alfaro para Ray-Ban Display">
+<title>Hola Alfaro</title>
+<style>
+  /* Fondo negro = transparente en los lentes. Colores claros = se ven bien */
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    color: #fff;
+    font-family: system-ui, sans-serif;
+    overflow: hidden; /* nada de scroll */
+  }
+  main {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 24px;
+    box-sizing: border-box;
+    text-align: center;
+  }
+  h1 { margin: 0; font-size: 44px; color: #5ff; }
+  #reloj { font-size: 56px; font-weight: 700; }
+  #info { font-size: 22px; color: #aaa; }
+  button, input {
+    font-size: 26px;
+    padding: 12px 20px;
+    border-radius: 16px;
+    border: 2px solid #555;
+    background: #111;
+    color: #fff;
+    width: 80%;
+  }
+  /* Marco cyan en lo que tienes seleccionado con el Neural Band */
+  button:focus, input:focus { outline: 4px solid #5ff; border-color: #5ff; }
+  #respuesta { font-size: 24px; color: #ff5; min-height: 30px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hola Alfaro 👓</h1>
+  <div id="reloj">--:--</div>
+  <div id="info">Batería: ...</div>
+  <button id="boton">Toca aquí: 0</button>
+  <input id="campo" type="text" placeholder="Dime algo (dicta aquí)">
+  <div id="respuesta"></div>
+</main>
+
+<script>
+  // 1. RELOJ que se actualiza cada segundo
+  function actualizarReloj() {
+    const ahora = new Date();
+    document.getElementById('reloj').textContent =
+      ahora.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+  }
+  actualizarReloj();
+  setInterval(actualizarReloj, 1000);
+
+  // 2. BATERÍA de los lentes
+  if (navigator.getBattery) {
+    navigator.getBattery().then(function (bat) {
+      function pintar() {
+        document.getElementById('info').textContent =
+          'Batería: ' + Math.round(bat.level * 100) + '%' + (bat.charging ? ' ⚡' : '');
+      }
+      pintar();
+      bat.addEventListener('levelchange', pintar);
+      bat.addEventListener('chargingchange', pintar);
+    });
+  } else {
+    document.getElementById('info').textContent = 'Batería: no disponible';
+  }
+
+  // 3. CONTADOR que se guarda aunque cierres la app
+  let cuenta = 0;
+  try { cuenta = Number(localStorage.getItem('cuenta')) || 0; } catch (e) {}
+  const boton = document.getElementById('boton');
+  boton.textContent = 'Toca aquí: ' + cuenta;
+  boton.addEventListener('click', function () {
+    cuenta++;
+    boton.textContent = 'Toca aquí: ' + cuenta;
+    try { localStorage.setItem('cuenta', cuenta); } catch (e) {}
+  });
+
+  // 4. DICTADO + VOZ: lo que dictes se muestra y los lentes te lo dicen
+  document.getElementById('campo').addEventListener('change', function (e) {
+    const texto = e.target.value.trim();
+    if (!texto) return;
+    document.getElementById('respuesta').textContent = 'Dijiste: ' + texto;
+    if ('speechSynthesis' in window) {
+      const voz = new SpeechSynthesisUtterance('Dijiste ' + texto);
+      voz.lang = 'es-MX';
+      speechSynthesis.speak(voz);
+    }
+    e.target.value = '';
+  });
+
+  // Al abrir, el botón ya queda seleccionado
+  boton.focus();
+</script>
+</body>
+</html>
