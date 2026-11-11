@@ -118,9 +118,13 @@
   revisarPin();
 
   // 2. VOZ EN ESPAÑOL. El Worker convierte la respuesta en audio y aquí lo reproducimos
+  //    Truco para que no tarde: partimos la respuesta en frases, pedimos el audio de todas
+  //    al mismo tiempo y empezamos a hablar en cuanto llega la primera.
   let vozOn = leer('vozOn') === '1';
-  let ultimoAudio = null;   // el audio de la última respuesta, para repetirlo
-  let ultimoTexto = '';     // el texto de la última respuesta
+  let ultimoTexto = '';                          // el texto de la última respuesta
+  let audios = { texto: '', promesas: [] };      // los audios ya pedidos, para repetir sin volver a pagar
+  let audioActual = null;                        // el pedacito que está sonando
+  let turnoVoz = 0;                              // sube cada vez que hay que callar lo anterior
 
   function pintarVoz() { btnVoz.textContent = vozOn ? '🔊 Voz' : '🔇 Voz'; }
   pintarVoz();
@@ -128,8 +132,31 @@
     vozOn = !vozOn;
     guardar('vozOn', vozOn ? '1' : '0');
     pintarVoz();
-    if (!vozOn && ultimoAudio) ultimoAudio.pause();
+    if (!vozOn) callar();
   });
+
+  // Calla lo que esté sonando
+  function callar() {
+    turnoVoz++;
+    if (audioActual) audioActual.pause();
+    audioActual = null;
+  }
+
+  // Parte un texto en frases. Las muy cortitas se pegan con la siguiente para que no suene cortado
+  function partir(texto) {
+    const frases = texto.split(/(?<=[.!?…])\s+/);
+    const partes = [];
+    let junta = '';
+    for (const f of frases) {
+      junta = junta ? junta + ' ' + f : f;
+      if (junta.length >= 25) { partes.push(junta); junta = ''; }
+    }
+    if (junta) {
+      if (partes.length) partes[partes.length - 1] += ' ' + junta;
+      else partes.push(junta);
+    }
+    return partes;
+  }
 
   // Le pide al Worker el audio de un texto
   async function pedirAudio(texto) {
@@ -147,43 +174,54 @@
     return new Audio(URL.createObjectURL(blob));
   }
 
-  // Reproduce el audio. Si el navegador lo bloquea, te pide que toques ▶️ Oír
-  async function reproducir() {
-    if (!ultimoAudio) return;
+  // Toca un pedacito de audio y avisa cuando termina
+  function tocar(audio) {
+    return new Promise(function (termino, fallo) {
+      audio.onended = termino;
+      audio.onerror = function () { fallo(new Error('No se pudo reproducir')); };
+      audio.currentTime = 0;
+      audio.play().then(function () { estado.textContent = 'Hablando... 🔊'; }).catch(fallo);
+    });
+  }
+
+  // Dice un texto en voz alta, frase por frase
+  async function decir(texto) {
+    callar();
+    const turno = turnoVoz;
+
+    // Si es el mismo texto de antes y sus audios salieron bien, los reusamos
+    if (audios.texto !== texto || audios.fallo) {
+      audios = { texto: texto, fallo: false, promesas: partir(texto).map(pedirAudio) };
+      audios.promesas.forEach(function (p) { p.catch(function () { audios.fallo = true; }); });
+    }
+    const mios = audios;
+
+    estado.textContent = 'Preparando voz... 🎙️';
     try {
-      ultimoAudio.currentTime = 0;
-      await ultimoAudio.play();
-      estado.textContent = 'Hablando... 🔊';
-      ultimoAudio.onended = function () { estado.textContent = 'Listo ✅'; };
+      for (const promesa of mios.promesas) {
+        const audio = await promesa;          // la primera frase llega rápido, las demás ya vienen en camino
+        if (turno !== turnoVoz) return;       // llegó otra respuesta o apagaste la voz
+        audioActual = audio;
+        await tocar(audio);
+        if (turno !== turnoVoz) return;
+      }
+      estado.textContent = 'Listo ✅';
     } catch (e) {
-      estado.textContent = 'Toca ▶️ Oír para escucharlo';
+      if (turno !== turnoVoz) return;
+      estado.textContent = e.name === 'NotAllowedError' ? 'Toca ▶️ Oír para escucharlo' : 'Voz: ' + e.message;
     }
   }
 
-  async function hablar(texto) {
+  function hablar(texto) {
     ultimoTexto = texto;
-    ultimoAudio = null;
-    if (!vozOn) return;
-    try {
-      estado.textContent = 'Preparando voz... 🎙️';
-      ultimoAudio = await pedirAudio(texto);
-      await reproducir();
-    } catch (e) {
-      estado.textContent = 'Voz: ' + e.message;
-    }
+    callar();
+    if (vozOn) decir(texto);
   }
 
-  // Botón Oír. Repite la última respuesta (o la pide si no la tenía)
-  btnOir.addEventListener('click', async function () {
-    if (ultimoAudio) return reproducir();
+  // Botón Oír. Repite la última respuesta
+  btnOir.addEventListener('click', function () {
     if (!ultimoTexto) { estado.textContent = 'Todavía no hay nada que oír'; return; }
-    try {
-      estado.textContent = 'Preparando voz... 🎙️';
-      ultimoAudio = await pedirAudio(ultimoTexto);
-      await reproducir();
-    } catch (e) {
-      estado.textContent = 'Voz: ' + e.message;
-    }
+    decir(ultimoTexto);
   });
 
   // 3. GPS. Solo se manda tu ubicación cuando este botón está prendido
