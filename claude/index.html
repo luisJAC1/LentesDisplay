@@ -19,14 +19,15 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     padding: 20px;
     box-sizing: border-box;
   }
-  h1 { margin: 0; font-size: 28px; color: #f96; text-align: center; }
+  h1 { margin: 0; font-size: 26px; color: #f96; text-align: center; }
   /* Caja donde sale la respuesta de Claude */
   #respuesta {
     flex: 1;
+    min-height: 0;
     overflow: hidden;
     font-size: 24px;
     line-height: 1.3;
@@ -35,19 +36,26 @@
     border-radius: 16px;
     padding: 14px;
   }
+  /* Renglones de una sola línea. Si no caben, se cortan con "..." */
+  #pregunta, #fuentes {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   #pregunta { font-size: 18px; color: #aaa; min-height: 22px; }
-  #estado { font-size: 16px; color: #f9a; text-align: center; }
-  .fila { display: flex; gap: 10px; }
+  #fuentes { font-size: 14px; color: #8ad; min-height: 18px; }
+  #estado { font-size: 16px; color: #f9a; text-align: center; min-height: 20px; }
+  .fila { display: flex; gap: 8px; }
   input, button {
-    font-size: 22px;
-    padding: 10px 14px;
+    font-size: 20px;
+    padding: 10px 6px;
     border-radius: 14px;
     border: 2px solid #555;
     background: #111;
     color: #fff;
   }
-  input { width: 100%; box-sizing: border-box; }
-  button { flex: 1; }
+  input { width: 100%; box-sizing: border-box; padding: 10px 14px; font-size: 22px; }
+  button { flex: 1; white-space: nowrap; }
   input:focus, button:focus { outline: 4px solid #f96; border-color: #f96; }
 </style>
 </head>
@@ -56,29 +64,45 @@
   <h1>✳️ Claude</h1>
   <div id="pregunta"></div>
   <div id="respuesta">Toca el campo de abajo y pregúntame algo.</div>
+  <div id="fuentes"></div>
   <input id="campo" type="text" placeholder="Pregúntale a Claude">
   <div class="fila">
     <button id="nueva">🧹 Nueva</button>
     <button id="voz">🔇 Voz</button>
     <button id="oir">▶️ Oír</button>
+    <button id="gps">✖️ GPS</button>
   </div>
   <div id="estado"></div>
 </main>
 
 <script>
-  // ⚠️ CAMBIA ESTO por la URL de tu Worker de Cloudflare
+  // La URL de tu Worker de Cloudflare
   const WORKER_URL = 'https://claude-lentes.jacs-lab.workers.dev';
 
   const campo = document.getElementById('campo');
   const respuesta = document.getElementById('respuesta');
   const pregunta = document.getElementById('pregunta');
+  const fuentes = document.getElementById('fuentes');
   const estado = document.getElementById('estado');
   const btnNueva = document.getElementById('nueva');
   const btnVoz = document.getElementById('voz');
+  const btnOir = document.getElementById('oir');
+  const btnGps = document.getElementById('gps');
 
   // Pequeña ayuda para leer y guardar en la "libretita" del navegador sin que truene
   function leer(clave) { try { return localStorage.getItem(clave); } catch (e) { return null; } }
   function guardar(clave, valor) { try { localStorage.setItem(clave, valor); } catch (e) {} }
+
+  // Pone un texto en la caja de respuesta. Si no cabe, achica la letra hasta que quepa
+  function mostrar(texto) {
+    respuesta.textContent = texto;
+    let letra = 24;
+    respuesta.style.fontSize = letra + 'px';
+    while (respuesta.scrollHeight > respuesta.clientHeight && letra > 15) {
+      letra--;
+      respuesta.style.fontSize = letra + 'px';
+    }
+  }
 
   // 1. PIN. La primera vez te lo pide y lo guarda en los lentes (nunca en GitHub)
   let pin = leer('pin');
@@ -93,9 +117,7 @@
   }
   revisarPin();
 
-  // 2. VOZ EN ESPAÑOL. El Worker convierte la respuesta en audio con una voz en español
-  //    y aquí lo reproducimos. Ya no usamos la voz gringa de los lentes.
-  const btnOir = document.getElementById('oir');
+  // 2. VOZ EN ESPAÑOL. El Worker convierte la respuesta en audio y aquí lo reproducimos
   let vozOn = leer('vozOn') === '1';
   let ultimoAudio = null;   // el audio de la última respuesta, para repetirlo
   let ultimoTexto = '';     // el texto de la última respuesta
@@ -164,16 +186,60 @@
     }
   });
 
-  // 3. MEMORIA DE LA PLÁTICA. Claude recuerda lo último que hablaron mientras la app está abierta
+  // 3. GPS. Solo se manda tu ubicación cuando este botón está prendido
+  let gpsOn = leer('gpsOn') === '1';
+  let ultimaUbicacion = null;   // la última que sí se pudo leer, por si una lectura falla
+
+  function pintarGps() { btnGps.textContent = gpsOn ? '📍 GPS' : '✖️ GPS'; }
+  pintarGps();
+
+  // Le pide la ubicación al navegador (que la saca del GPS de tu cel).
+  // Si tarda más de 5 segundos o falla, regresa la última conocida o nada.
+  function leerUbicacion() {
+    return new Promise(function (listo) {
+      if (!('geolocation' in navigator)) return listo(null);
+      navigator.geolocation.getCurrentPosition(
+        function (pos) {
+          ultimaUbicacion = {
+            lat: pos.coords.latitude,
+            lon: pos.coords.longitude,
+            precision: pos.coords.accuracy,
+          };
+          listo(ultimaUbicacion);
+        },
+        function () { listo(ultimaUbicacion); },
+        { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+      );
+    });
+  }
+
+  btnGps.addEventListener('click', async function () {
+    if (gpsOn) {
+      gpsOn = false;
+      ultimaUbicacion = null;
+      estado.textContent = 'GPS apagado';
+    } else {
+      estado.textContent = 'Buscando tu ubicación... 📡';
+      const u = await leerUbicacion();
+      gpsOn = !!u;
+      estado.textContent = u ? 'GPS prendido ✅' : 'No pude leer el GPS. Revisa el permiso de ubicación';
+    }
+    guardar('gpsOn', gpsOn ? '1' : '0');
+    pintarGps();
+  });
+
+  // 4. MEMORIA DE LA PLÁTICA. Claude recuerda lo último que hablaron mientras la app está abierta.
+  //    (La memoria permanente vive en el Worker, esa no se borra con este botón)
   let historial = [];
   btnNueva.addEventListener('click', function () {
     historial = [];
     pregunta.textContent = '';
-    respuesta.textContent = 'Plática nueva. Pregúntame algo.';
+    fuentes.textContent = '';
+    mostrar('Plática nueva. Pregúntame algo.');
     estado.textContent = 'Borrón y cuenta nueva 🧹';
   });
 
-  // 4. PREGUNTAR. Cuando terminas de dictar, se manda al Worker y el Worker a Claude
+  // 5. PREGUNTAR. Cuando terminas de dictar o escribir, se manda al Worker y el Worker a Claude
   campo.addEventListener('change', async function () {
     const texto = campo.value.trim();
     campo.value = '';
@@ -189,20 +255,27 @@
       }
       guardar('pin', pin);
       revisarPin();
-      respuesta.textContent = 'PIN guardado: ' + pin + ' ✅ Ya pregúntame algo.';
+      mostrar('PIN guardado: ' + pin + ' ✅ Ya pregúntame algo.');
       return;
     }
 
     pregunta.textContent = '🗣️ ' + texto;
-    respuesta.textContent = 'Pensando... 🤔';
+    fuentes.textContent = '';
+    mostrar('Pensando... 🤔');
     estado.textContent = '';
     historial.push({ role: 'user', content: texto });
 
     try {
+      const envio = { messages: historial.slice(-10) };
+      if (gpsOn) {
+        const u = await leerUbicacion();
+        if (u) envio.ubicacion = u;
+      }
+
       const res = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Pin': pin },
-        body: JSON.stringify({ messages: historial.slice(-10) }),
+        body: JSON.stringify(envio),
       });
       const data = await res.json();
 
@@ -211,24 +284,31 @@
         pin = null;
         guardar('pin', '');
         historial.pop();
-        respuesta.textContent = 'PIN incorrecto. Vuelve a escribirlo abajo.';
+        mostrar('PIN incorrecto. Vuelve a escribirlo abajo.');
         revisarPin();
         return;
       }
       if (!res.ok) throw new Error(data.error || 'Algo falló');
 
       historial.push({ role: 'assistant', content: data.text });
-      respuesta.textContent = data.text;
+      mostrar(data.text);
+
+      // Renglón chiquito con lo que usó Claude (🔎 buscó, 🌦️ clima, 📍 lugar, 💾 memoria) y sus fuentes
+      const extras = (data.usado || []).join(' ');
+      const sitios = (data.fuentes || []).join(', ');
+      fuentes.textContent = [extras, sitios].filter(Boolean).join(' · ');
+      estado.textContent = data.aviso || 'Listo ✅';
+
       hablar(data.text);
     } catch (err) {
       historial.pop();
-      respuesta.textContent = 'No pude hablar con Claude 😵';
+      mostrar('No pude hablar con Claude 😵');
       estado.textContent = 'Error: ' + err.message;
     }
   });
 
-  // 5. NAVEGACIÓN con el Neural Band (igual que en tu app de prueba)
-  const controles = [campo, btnNueva, btnVoz, btnOir];
+  // 6. NAVEGACIÓN con el Neural Band
+  const controles = [campo, btnNueva, btnVoz, btnOir, btnGps];
   document.addEventListener('keydown', function (e) {
     const adelante = e.key === 'ArrowDown' || e.key === 'ArrowRight';
     const atras = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
